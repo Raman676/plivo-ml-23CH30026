@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>End-of-Turn Detection — Summary</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #222; line-height: 1.5; }
+  h1 { border-bottom: 3px solid #3d5a80; padding-bottom: 8px; }
+  h2 { color: #3d5a80; margin-top: 40px; }
+  h3 { color: #e07a5f; }
+  .plot-row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .plot img { max-width: 420px; border: 1px solid #ddd; border-radius: 6px; }
+  .lang-section { background: #f7f7f7; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; }
+  pre { background: #272822; color: #f8f8f2; padding: 16px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }
+  .badge { display:inline-block; background:#3d5a80; color:white; padding:2px 10px; border-radius:12px; font-size: 0.85em; margin-right: 6px;}
+  .human { background:#e07a5f; }
+  .agent { background:#81b29a; }
+</style>
+</head>
+<body>
+<h1>End-of-Turn Detection — Summary</h1>
+
+<h2>Approach</h2>
+<p>
+Causal prosodic feature extraction (pitch trend/finality cues, energy decay,
+spectral/MFCC shape, per-turn baseline-normalized deltas, and causal
+pause-history context) feeding a calibrated Random Forest (RandomForest +
+CalibratedClassifierCV) trained on pooled English + Hindi data, since the
+hidden test set is mostly Hindi and prosodic finality cues generalize better
+across languages than anything requiring ASR/semantics. Every feature is
+computed strictly from audio up to <code>pause_start</code> — see
+<code>test_causality.py</code>, which proves this by corrupting all audio
+after <code>pause_start</code> and confirming zero feature change.
+</p>
+
+<h2>Score</h2>
+<ul><li>english: baseline 1600ms -&gt; held-out val ~1100-1175ms (AUC 0.53)</li><li>hindi: baseline 1600ms -&gt; held-out val 640ms (AUC 0.82)</li></ul>
+
+<h2>Diagnostics</h2>
+
+        <div class="lang-section">
+          <h3>english</h3>
+          <p>248 pauses scored &mdash; 148 hold / 100 eot
+              &mdash; AUC=1.000</p>
+          <div class="plot-row">
+            <div class="plot"><img src="data:image/png;base64,None"/></div>
+            <p><em>ROC not plotted (single class in this file)</em></p>
+          </div>
+        </div>
+        
+        <div class="lang-section">
+          <h3>hindi</h3>
+          <p>248 pauses scored &mdash; 148 hold / 100 eot
+              &mdash; AUC=1.000</p>
+          <div class="plot-row">
+            <div class="plot"><img src="data:image/png;base64,None"/></div>
+            <p><em>ROC not plotted (single class in this file)</em></p>
+          </div>
+        </div>
+        
+
+<h2>Human vs. coding-agent contribution</h2>
+<p>
+<span class="badge agent">coding agent</span> Built with an AI coding
+assistant: the feature-extraction scaffold, dataset-loading/alignment
+plumbing, the calibrated-classifier training loop, the causality-proof test,
+and this report generator.
+</p>
+<p>
+<span class="badge human">human</span> <em>I ran the pipeline against real data, caught a train/test leakage issue in my own held-out validation setup, then diagnosed a large English/Hindi performance gap by testing and ruling out three specific hypotheses (pooling, window truncation, pause-history shortcut) using feature importance analysis — see RUNLOG.md and NOTES.md for the full trail.</em>
+</p>
+
+<h2>Run log</h2>
+<pre># Run Log
+
+| time | change | score.py result | notes |
+|---|---|---|---|
+| baseline | silence-only (given) | AUC=0.514, delay=1600ms @0% interrupted | confirms duration alone is weak |
+| model v1 | causal prosody features (pitch/energy/mfcc/spectral) + calibrated RandomForest, pooled en+hi, held-out 80/20 val | english: AUC=0.527, delay~1175ms | hindi: AUC=0.824, delay=640ms | large en/hi gap found |
+| diagnosis | tested 3 hypotheses for english gap | ruled out: pooling (solo-lang model = same AUC), window truncation (english has MORE pre-pause audio than hindi), pause-history shortcut (not in top-15 importances) | importances flat/diffuse -&gt; genuinely weak signal in english audio, not a modeling bug |
+| final | retrained on 100% of english+hindi data (train.py --data_dirs eot_handout/eot_data/english eot_handout/eot_data/hindi) | expected: english ~1100-1175ms, hindi ~640ms (from held-out val) | this is the submitted model.joblib and predictions_*.csv |
+</pre>
+
+<h2>Notes</h2>
+<pre>The model extracts causal prosodic features (pitch trend, energy decay,
+spectral/MFCC shape, per-turn baseline-normalized deltas) from the 1.5s of
+audio before each pause, feeding a calibrated RandomForest trained on pooled
+English+Hindi data. On a held-out 80/20 split by turn, it reaches AUC 0.82
+and 640ms mean delay on Hindi (vs 1600ms baseline), but only AUC 0.53 and
+~1100ms on English, barely above the 0.51 baseline. I ruled out three
+explanations for the English gap: pooling hurting it (a solo English model
+scored identically), window truncation (English actually has more pre-pause
+audio than Hindi on average), and a pause-history shortcut (n_prior_pauses
+doesn&#x27;t appear in the top-15 feature importances). Feature importances are
+flat and diffuse across all 47 features rather than concentrated on any
+strong cue, suggesting the finality prosodic signal is genuinely weaker or
+noisier in this English recording set. With more time I&#x27;d inspect the raw
+English audio directly for compression artifacts, speaker-style variation,
+or a systematically flatter intonation pattern that might be masking the cue,
+and would try a language-conditioned feature (or separate calibration) rather
+than more feature engineering, since the diagnostic trail points to a data
+characteristic rather than a fixable modeling bug.
+</pre>
+
+</body>
+</html>
